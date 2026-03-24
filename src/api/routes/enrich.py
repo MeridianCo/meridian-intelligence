@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from models.param_types import enrich_request
 
 router = APIRouter()
 
@@ -14,10 +15,8 @@ async def root():
 async def health_check():
     return {"status": "ok"}
 
-            # "/enrich/profile?linkedin_url=...&twitter_handle=...&github_username=..."
-
 @router.get("/profile")
-async def enrich_profile(linkedin_url: str = None, twitter_handle: str = None, github_username: str = None):
+async def enrich_profile(request: enrich_request):
     #TODO: implement enrichment logic here
     return {"message": "Enriching profile with provided social URLs/handles..."}
     
