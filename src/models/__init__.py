@@ -26,7 +26,6 @@ class DateRange(BaseModel):
     end: Optional[date] = None
     is_current: bool = False
 
-
 class WorkExperience(BaseModel):
     title: str
     company: str
