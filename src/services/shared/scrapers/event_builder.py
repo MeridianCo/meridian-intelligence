@@ -114,6 +114,31 @@ class EventCandidate:
     fingerprint: str = ""
 
 
+@dataclass
+class SourceReliability:
+    """Quality signals for a scraped source."""
+
+    url: str
+    name: str | None = None
+    score: int = 0
+    events_found: int = 0
+    duplicate_mentions: int = 0
+    detail_completeness: float = 0.0
+    broken: bool = False
+    stale: bool = False
+    duplicate_heavy: bool = False
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class EventScrapeResult:
+    """Scrape output plus source discovery and quality telemetry."""
+
+    events: list[EventCandidate] = field(default_factory=list)
+    discovered_sources: list[BlogSource] = field(default_factory=list)
+    source_reliability: list[SourceReliability] = field(default_factory=list)
+
+
 class BlogTextParser(HTMLParser):
     """Extract title, links, and visible text from ordinary blog HTML."""
 
@@ -190,18 +215,38 @@ class BlogTextParser(HTMLParser):
 def scrape_matching_events(search: EventSearch) -> list[EventCandidate]:
     """Fetch configured blogs and return event candidates sorted by relevance."""
 
+    return scrape_events(search).events
+
+
+def scrape_events(search: EventSearch) -> EventScrapeResult:
+    """Fetch blogs and return events plus discovery/reliability metadata."""
+
     candidates: list[EventCandidate] = []
+    source_errors: dict[str, list[str]] = {}
+    candidates_by_source: dict[str, list[EventCandidate]] = {}
+    discovered_sources = discover_event_sources(search)[: search.max_discovered_sources]
     sources = _append_sources(
         search.sources,
-        discover_event_sources(search)[: search.max_discovered_sources],
+        discovered_sources,
     )
     for source in sources:
-        html = fetch_url(source.url)
-        parser = BlogTextParser(source.url)
-        parser.feed(html)
-        candidates.extend(_extract_candidates(search, source, parser))
+        try:
+            html = fetch_url(source.url)
+            parser = BlogTextParser(source.url)
+            parser.feed(html)
+            source_candidates = _extract_candidates(search, source, parser)
+        except Exception as exc:
+            source_errors.setdefault(source.url, []).append(str(exc))
+            source_candidates = []
+        candidates_by_source[source.url] = source_candidates
+        candidates.extend(source_candidates)
 
-    return _dedupe_candidates(candidates)[: search.max_results]
+    events = _dedupe_candidates(candidates)[: search.max_results]
+    return EventScrapeResult(
+        events=events,
+        discovered_sources=discovered_sources,
+        source_reliability=_score_sources(sources, candidates_by_source, events, source_errors),
+    )
 
 
 def discover_event_sources(search: EventSearch) -> list[BlogSource]:
@@ -267,6 +312,94 @@ def _append_sources(existing: list[BlogSource], discovered: list[BlogSource]) ->
     for source in discovered:
         sources_by_url.setdefault(source.url, source)
     return list(sources_by_url.values())
+
+
+def _score_sources(
+    sources: list[BlogSource],
+    candidates_by_source: dict[str, list[EventCandidate]],
+    deduped_events: list[EventCandidate],
+    source_errors: dict[str, list[str]],
+) -> list[SourceReliability]:
+    reliability: list[SourceReliability] = []
+    for source in sources:
+        source_candidates = candidates_by_source.get(source.url, [])
+        duplicate_mentions = sum(
+            1
+            for event in deduped_events
+            if source.url in event.source_urls and event.duplicate_count > 1
+        )
+        completeness = _average_detail_completeness(source_candidates)
+        broken = source.url in source_errors
+        stale = not broken and not source_candidates
+        duplicate_heavy = bool(source_candidates) and duplicate_mentions >= len(source_candidates)
+        score = _source_score(
+            events_found=len(source_candidates),
+            duplicate_mentions=duplicate_mentions,
+            detail_completeness=completeness,
+            broken=broken,
+            stale=stale,
+            duplicate_heavy=duplicate_heavy,
+        )
+        reliability.append(
+            SourceReliability(
+                url=source.url,
+                name=source.name,
+                score=score,
+                events_found=len(source_candidates),
+                duplicate_mentions=duplicate_mentions,
+                detail_completeness=completeness,
+                broken=broken,
+                stale=stale,
+                duplicate_heavy=duplicate_heavy,
+                errors=source_errors.get(source.url, []),
+            )
+        )
+    return sorted(reliability, key=lambda item: item.score, reverse=True)
+
+
+def _average_detail_completeness(candidates: list[EventCandidate]) -> float:
+    if not candidates:
+        return 0.0
+    return round(
+        sum(_detail_completeness(candidate.details) for candidate in candidates) / len(candidates),
+        2,
+    )
+
+
+def _detail_completeness(details: EventDetails) -> float:
+    fields = [
+        details.description,
+        details.location,
+        details.venue,
+        details.times,
+        details.prices,
+        details.organizer,
+        details.start_date,
+        details.image_url,
+        details.ticket_url,
+    ]
+    present = sum(1 for value in fields if value)
+    return present / len(fields)
+
+
+def _source_score(
+    events_found: int,
+    duplicate_mentions: int,
+    detail_completeness: float,
+    broken: bool,
+    stale: bool,
+    duplicate_heavy: bool,
+) -> int:
+    if broken:
+        return 0
+    score = 45 + min(events_found, 5) * 6 + int(detail_completeness * 25)
+    if duplicate_mentions:
+        score += min(duplicate_mentions, 3) * 3
+    if stale:
+        score -= 30
+    if duplicate_heavy:
+        score -= 12
+    return max(0, min(score, 100))
 
 
 def _extract_candidates(
@@ -668,4 +801,21 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
         "dates": candidate.dates,
         "matched_terms": candidate.matched_terms,
         "scraped_at": date.today().isoformat(),
+    }
+
+
+def source_reliability_to_dict(source: SourceReliability) -> dict[str, object]:
+    """Convert source reliability telemetry into JSON-friendly output."""
+
+    return {
+        "url": source.url,
+        "name": source.name,
+        "score": source.score,
+        "events_found": source.events_found,
+        "duplicate_mentions": source.duplicate_mentions,
+        "detail_completeness": source.detail_completeness,
+        "broken": source.broken,
+        "stale": source.stale,
+        "duplicate_heavy": source.duplicate_heavy,
+        "errors": source.errors,
     }

@@ -2,7 +2,13 @@ from fastapi import APIRouter, HTTPException
 
 from src.db.event_store import save_event_candidates
 from src.models.param_types import event_search_request
-from src.services.events import BlogSource, EventSearch, candidate_to_dict, discover_event_sources, scrape_matching_events
+from src.services.events import (
+    BlogSource,
+    EventSearch,
+    candidate_to_dict,
+    scrape_events,
+    source_reliability_to_dict,
+)
 
 router = APIRouter()
 
@@ -35,8 +41,8 @@ async def search_events(request: event_search_request):
     )
 
     try:
-        discovered_sources = discover_event_sources(search)[: request.max_discovered_sources]
-        candidates = scrape_matching_events(search)
+        result = scrape_events(search)
+        candidates = result.events
         saved_events = save_event_candidates(candidates) if request.persist_results else []
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Unable to scrape source URLs: {exc}") from exc
@@ -46,7 +52,10 @@ async def search_events(request: event_search_request):
         "interests": request.interests,
         "discovered_sources": [
             {"url": source.url, "name": source.name, "score": source.discovery_score}
-            for source in discovered_sources
+            for source in result.discovered_sources
+        ],
+        "source_reliability": [
+            source_reliability_to_dict(source) for source in result.source_reliability
         ],
         "count": len(candidates),
         "saved_count": len(saved_events),

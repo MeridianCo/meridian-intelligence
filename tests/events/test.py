@@ -2,7 +2,7 @@ import unittest
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_matching_events
+from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
 from src.db.event_store import list_saved_events, save_event_candidates
 
 
@@ -215,6 +215,30 @@ class EventScraperTests(unittest.TestCase):
         self.assertEqual(results[0].details.image_url, "https://example.com/summit.jpg")
         self.assertEqual(results[0].details.ticket_url, "https://example.com/tickets")
         self.assertEqual(results[0].details.prices, ["49 CAD"])
+
+    @patch(
+        "src.services.shared.scrapers.event_builder.fetch_url",
+        side_effect=lambda url: BLOG_HTML if "good" in url else (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    def test_scores_source_reliability(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI"],
+            sources=[
+                BlogSource(url="https://good.example/blog"),
+                BlogSource(url="https://broken.example/blog"),
+            ],
+        )
+
+        result = scrape_events(search)
+        reliability = {source.url: source for source in result.source_reliability}
+
+        self.assertGreaterEqual(len(result.events), 1)
+        self.assertGreater(reliability["https://good.example/blog"].score, 0)
+        self.assertGreaterEqual(reliability["https://good.example/blog"].events_found, 1)
+        self.assertFalse(reliability["https://good.example/blog"].broken)
+        self.assertTrue(reliability["https://broken.example/blog"].broken)
+        self.assertEqual(reliability["https://broken.example/blog"].score, 0)
 
 
 if __name__ == "__main__":
