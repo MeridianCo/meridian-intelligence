@@ -23,8 +23,13 @@ curl -X POST http://localhost:8000/events/search \
     "nearby_locations": ["Airdrie", "Cochrane"],
     "interests": ["AI", "healthcare", "founders"],
     "source_urls": ["https://example.com/local-events-blog"],
+    "seed_urls": ["https://example.com"],
+    "discover_sources": true,
+    "persist_results": true,
     "max_results": 10
   }'
 ```
 
-The response includes each candidate's title, source URL, event URL, all duplicate source/event URLs, duplicate count, snippet, detected dates, matched terms, relevance score, and gathered event details such as description, location, venue, times, prices, and organizer.
+The scraper can discover likely event source pages from seed URLs, extract `schema.org/Event` JSON-LD when available, persist merged events to a local SQLite database, and score source reliability.
+
+The response includes discovered sources, source reliability, each candidate's title, source URL, event URL, stable fingerprint, all duplicate source/event URLs, duplicate count, snippet, detected dates, matched terms, relevance score, and gathered event details such as description, location, venue, times, prices, organizer, image URL, ticket URL, and structured start/end dates.

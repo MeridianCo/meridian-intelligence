@@ -13,7 +13,9 @@ from datetime import date
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.parse import urljoin
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+import json
 import re
 import unicodedata
 
@@ -49,6 +51,11 @@ EVENT_WORDS = re.compile(
     r"webinar|networking|panel|summit|market|concert)\b",
     re.IGNORECASE,
 )
+SOURCE_WORDS = re.compile(
+    r"\b(event|events|calendar|things to do|what'?s on|happening|"
+    r"meetup|workshop|conference|festival|community|blog)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -61,6 +68,10 @@ class EventDetails:
     times: list[str] = field(default_factory=list)
     prices: list[str] = field(default_factory=list)
     organizer: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    image_url: str | None = None
+    ticket_url: str | None = None
 
 
 @dataclass
@@ -69,6 +80,7 @@ class BlogSource:
 
     url: str
     name: str | None = None
+    discovery_score: int = 0
 
 
 @dataclass
@@ -79,7 +91,9 @@ class EventSearch:
     interests: list[str] = field(default_factory=list)
     nearby_locations: list[str] = field(default_factory=list)
     sources: list[BlogSource] = field(default_factory=list)
+    seed_urls: list[str] = field(default_factory=list)
     max_results: int = 10
+    max_discovered_sources: int = 5
 
 
 @dataclass
@@ -97,6 +111,32 @@ class EventCandidate:
     event_urls: list[str] = field(default_factory=list)
     duplicate_count: int = 1
     details: EventDetails = field(default_factory=EventDetails)
+    fingerprint: str = ""
+
+
+@dataclass
+class SourceReliability:
+    """Quality signals for a scraped source."""
+
+    url: str
+    name: str | None = None
+    score: int = 0
+    events_found: int = 0
+    duplicate_mentions: int = 0
+    detail_completeness: float = 0.0
+    broken: bool = False
+    stale: bool = False
+    duplicate_heavy: bool = False
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class EventScrapeResult:
+    """Scrape output plus source discovery and quality telemetry."""
+
+    events: list[EventCandidate] = field(default_factory=list)
+    discovered_sources: list[BlogSource] = field(default_factory=list)
+    source_reliability: list[SourceReliability] = field(default_factory=list)
 
 
 class BlogTextParser(HTMLParser):
@@ -110,11 +150,18 @@ class BlogTextParser(HTMLParser):
         self._current_link: str | None = None
         self._current_link_text: list[str] = []
         self._in_title = False
+        self._in_json_ld = False
+        self._json_ld_parts: list[str] = []
         self._skip_depth = 0
         self._text_parts: list[str] = []
+        self.json_ld_blocks: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
+        if tag == "script" and str(attrs_dict.get("type", "")).lower() == "application/ld+json":
+            self._in_json_ld = True
+            self._json_ld_parts = []
+            return
         if tag in {"script", "style", "noscript", "svg"}:
             self._skip_depth += 1
             return
@@ -127,6 +174,13 @@ class BlogTextParser(HTMLParser):
             self._text_parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._in_json_ld:
+            json_text = "".join(self._json_ld_parts).strip()
+            if json_text:
+                self.json_ld_blocks.append(json_text)
+            self._in_json_ld = False
+            self._json_ld_parts = []
+            return
         if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
             self._skip_depth -= 1
             return
@@ -139,6 +193,9 @@ class BlogTextParser(HTMLParser):
             self._current_link_text = []
 
     def handle_data(self, data: str) -> None:
+        if self._in_json_ld:
+            self._json_ld_parts.append(data)
+            return
         if self._skip_depth:
             return
         text = " ".join(data.split())
@@ -158,14 +215,59 @@ class BlogTextParser(HTMLParser):
 def scrape_matching_events(search: EventSearch) -> list[EventCandidate]:
     """Fetch configured blogs and return event candidates sorted by relevance."""
 
-    candidates: list[EventCandidate] = []
-    for source in search.sources:
-        html = fetch_url(source.url)
-        parser = BlogTextParser(source.url)
-        parser.feed(html)
-        candidates.extend(_extract_candidates(search, source, parser))
+    return scrape_events(search).events
 
-    return _dedupe_candidates(candidates)[: search.max_results]
+
+def scrape_events(search: EventSearch) -> EventScrapeResult:
+    """Fetch blogs and return events plus discovery/reliability metadata."""
+
+    candidates: list[EventCandidate] = []
+    source_errors: dict[str, list[str]] = {}
+    candidates_by_source: dict[str, list[EventCandidate]] = {}
+    discovered_sources = discover_event_sources(search)[: search.max_discovered_sources]
+    sources = _append_sources(
+        search.sources,
+        discovered_sources,
+    )
+    for source in sources:
+        try:
+            html = fetch_url(source.url)
+            parser = BlogTextParser(source.url)
+            parser.feed(html)
+            source_candidates = _extract_candidates(search, source, parser)
+        except Exception as exc:
+            source_errors.setdefault(source.url, []).append(str(exc))
+            source_candidates = []
+        candidates_by_source[source.url] = source_candidates
+        candidates.extend(source_candidates)
+
+    events = _dedupe_candidates(candidates)[: search.max_results]
+    return EventScrapeResult(
+        events=events,
+        discovered_sources=discovered_sources,
+        source_reliability=_score_sources(sources, candidates_by_source, events, source_errors),
+    )
+
+
+def discover_event_sources(search: EventSearch) -> list[BlogSource]:
+    """Discover likely event/listing pages from user-provided seed URLs."""
+
+    discovered: dict[str, BlogSource] = {}
+    for seed_url in search.seed_urls:
+        html = fetch_url(seed_url)
+        parser = BlogTextParser(seed_url)
+        parser.feed(html)
+        for text, url in parser.links:
+            if not _same_site(seed_url, url):
+                continue
+            score = _score_source_link(search, text, url)
+            if score <= 0:
+                continue
+            existing = discovered.get(url)
+            if existing is None or score > existing.discovery_score:
+                discovered[url] = BlogSource(url=url, name=text or None, discovery_score=score)
+
+    return sorted(discovered.values(), key=lambda source: source.discovery_score, reverse=True)
 
 
 def fetch_url(url: str, timeout: int = 10) -> str:
@@ -183,6 +285,123 @@ def fetch_url(url: str, timeout: int = 10) -> str:
         return response.read().decode(charset, errors="replace")
 
 
+def _score_source_link(search: EventSearch, text: str, url: str) -> int:
+    haystack = f"{text} {url}".lower()
+    score = 0
+    if SOURCE_WORDS.search(haystack):
+        score += 3
+    if search.city.lower() in haystack:
+        score += 2
+    for interest in search.interests:
+        if interest.lower() in haystack:
+            score += 2
+    for nearby in search.nearby_locations:
+        if nearby.lower() in haystack:
+            score += 1
+    return score
+
+
+def _same_site(seed_url: str, candidate_url: str) -> bool:
+    seed_host = urlparse(seed_url).netloc.lower().removeprefix("www.")
+    candidate_host = urlparse(candidate_url).netloc.lower().removeprefix("www.")
+    return bool(seed_host and candidate_host and seed_host == candidate_host)
+
+
+def _append_sources(existing: list[BlogSource], discovered: list[BlogSource]) -> list[BlogSource]:
+    sources_by_url = {source.url: source for source in existing}
+    for source in discovered:
+        sources_by_url.setdefault(source.url, source)
+    return list(sources_by_url.values())
+
+
+def _score_sources(
+    sources: list[BlogSource],
+    candidates_by_source: dict[str, list[EventCandidate]],
+    deduped_events: list[EventCandidate],
+    source_errors: dict[str, list[str]],
+) -> list[SourceReliability]:
+    reliability: list[SourceReliability] = []
+    for source in sources:
+        source_candidates = candidates_by_source.get(source.url, [])
+        duplicate_mentions = sum(
+            1
+            for event in deduped_events
+            if source.url in event.source_urls and event.duplicate_count > 1
+        )
+        completeness = _average_detail_completeness(source_candidates)
+        broken = source.url in source_errors
+        stale = not broken and not source_candidates
+        duplicate_heavy = bool(source_candidates) and duplicate_mentions >= len(source_candidates)
+        score = _source_score(
+            events_found=len(source_candidates),
+            duplicate_mentions=duplicate_mentions,
+            detail_completeness=completeness,
+            broken=broken,
+            stale=stale,
+            duplicate_heavy=duplicate_heavy,
+        )
+        reliability.append(
+            SourceReliability(
+                url=source.url,
+                name=source.name,
+                score=score,
+                events_found=len(source_candidates),
+                duplicate_mentions=duplicate_mentions,
+                detail_completeness=completeness,
+                broken=broken,
+                stale=stale,
+                duplicate_heavy=duplicate_heavy,
+                errors=source_errors.get(source.url, []),
+            )
+        )
+    return sorted(reliability, key=lambda item: item.score, reverse=True)
+
+
+def _average_detail_completeness(candidates: list[EventCandidate]) -> float:
+    if not candidates:
+        return 0.0
+    return round(
+        sum(_detail_completeness(candidate.details) for candidate in candidates) / len(candidates),
+        2,
+    )
+
+
+def _detail_completeness(details: EventDetails) -> float:
+    fields = [
+        details.description,
+        details.location,
+        details.venue,
+        details.times,
+        details.prices,
+        details.organizer,
+        details.start_date,
+        details.image_url,
+        details.ticket_url,
+    ]
+    present = sum(1 for value in fields if value)
+    return present / len(fields)
+
+
+def _source_score(
+    events_found: int,
+    duplicate_mentions: int,
+    detail_completeness: float,
+    broken: bool,
+    stale: bool,
+    duplicate_heavy: bool,
+) -> int:
+    if broken:
+        return 0
+    score = 45 + min(events_found, 5) * 6 + int(detail_completeness * 25)
+    if duplicate_mentions:
+        score += min(duplicate_mentions, 3) * 3
+    if stale:
+        score -= 30
+    if duplicate_heavy:
+        score -= 12
+    return max(0, min(score, 100))
+
+
 def _extract_candidates(
     search: EventSearch,
     source: BlogSource,
@@ -190,7 +409,7 @@ def _extract_candidates(
 ) -> list[EventCandidate]:
     snippets = _date_snippets(parser.text)
     link_lookup = _relevant_links(parser.links)
-    candidates: list[EventCandidate] = []
+    candidates: list[EventCandidate] = _extract_json_ld_candidates(search, source, parser)
 
     for snippet in snippets:
         title = _title_from_snippet(snippet, parser.title, link_lookup.keys())
@@ -212,10 +431,150 @@ def _extract_candidates(
                 source_urls=[source.url],
                 event_urls=[event_url],
                 details=details,
+                fingerprint=event_fingerprint(title, dates, details.location),
             )
         )
 
     return sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
+
+
+def _extract_json_ld_candidates(
+    search: EventSearch,
+    source: BlogSource,
+    parser: BlogTextParser,
+) -> list[EventCandidate]:
+    candidates: list[EventCandidate] = []
+    for block in parser.json_ld_blocks:
+        for event in _iter_json_ld_events(block):
+            title = str(event.get("name") or parser.title or "Untitled event")
+            event_url = str(event.get("url") or source.url)
+            description = str(event.get("description") or "")
+            details = _details_from_json_ld(search, event, description)
+            dates = [value for value in [details.start_date, details.end_date] if value]
+            score, matched_terms = _score_snippet(search, description, title)
+            if score <= 0:
+                continue
+            candidates.append(
+                EventCandidate(
+                    title=title[:120],
+                    source_url=source.url,
+                    event_url=event_url,
+                    snippet=description[:700] or title,
+                    score=score + 2,
+                    dates=dates,
+                    matched_terms=matched_terms,
+                    source_urls=[source.url],
+                    event_urls=[event_url],
+                    details=details,
+                    fingerprint=event_fingerprint(title, dates, details.location),
+                )
+            )
+    return candidates
+
+
+def _iter_json_ld_events(block: str) -> Iterable[dict[str, object]]:
+    try:
+        data = json.loads(block)
+    except json.JSONDecodeError:
+        return []
+
+    nodes = data if isinstance(data, list) else [data]
+    events: list[dict[str, object]] = []
+    while nodes:
+        node = nodes.pop(0)
+        if not isinstance(node, dict):
+            continue
+        graph = node.get("@graph")
+        if isinstance(graph, list):
+            nodes.extend(graph)
+        if _is_json_ld_event(node):
+            events.append(node)
+    return events
+
+
+def _is_json_ld_event(node: dict[str, object]) -> bool:
+    event_type = node.get("@type")
+    if isinstance(event_type, list):
+        return any(str(item).lower() == "event" for item in event_type)
+    return str(event_type).lower() == "event"
+
+
+def _details_from_json_ld(
+    search: EventSearch,
+    event: dict[str, object],
+    description: str,
+) -> EventDetails:
+    location, venue = _location_from_json_ld(event.get("location"))
+    organizer = _name_from_json_ld(event.get("organizer"))
+    offer = _first_item(event.get("offers"))
+    ticket_url = _string_value(offer.get("url")) if isinstance(offer, dict) else None
+    price = _price_from_json_ld(offer)
+    start_date = _string_value(event.get("startDate"))
+    end_date = _string_value(event.get("endDate"))
+
+    return EventDetails(
+        description=description[:500],
+        location=location or _best_location(search, description, venue),
+        venue=venue,
+        times=_append_unique([], [start_date or "", end_date or ""]),
+        prices=[price] if price else [],
+        organizer=organizer,
+        start_date=start_date,
+        end_date=end_date,
+        image_url=_image_from_json_ld(event.get("image")),
+        ticket_url=ticket_url,
+    )
+
+
+def _location_from_json_ld(value: object) -> tuple[str | None, str | None]:
+    location = _first_item(value)
+    if isinstance(location, dict):
+        venue = _string_value(location.get("name"))
+        address = location.get("address")
+        if isinstance(address, dict):
+            city = _string_value(address.get("addressLocality"))
+            region = _string_value(address.get("addressRegion"))
+            locality = ", ".join(part for part in [city, region] if part)
+            return locality or venue, venue
+        return venue, venue
+    return _string_value(location), _string_value(location)
+
+
+def _name_from_json_ld(value: object) -> str | None:
+    item = _first_item(value)
+    if isinstance(item, dict):
+        return _string_value(item.get("name"))
+    return _string_value(item)
+
+
+def _image_from_json_ld(value: object) -> str | None:
+    item = _first_item(value)
+    if isinstance(item, dict):
+        return _string_value(item.get("url"))
+    return _string_value(item)
+
+
+def _price_from_json_ld(value: object) -> str | None:
+    offer = _first_item(value)
+    if not isinstance(offer, dict):
+        return None
+    price = _string_value(offer.get("price"))
+    currency = _string_value(offer.get("priceCurrency"))
+    if price and currency:
+        return f"{price} {currency}"
+    return price
+
+
+def _first_item(value: object) -> object:
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def _string_value(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _date_snippets(text: str) -> list[str]:
@@ -334,7 +693,9 @@ def _best_link_for_snippet(snippet: str, fallback_url: str, links: dict[str, str
 def _dedupe_candidates(candidates: list[EventCandidate]) -> list[EventCandidate]:
     deduped: dict[tuple[str, str], EventCandidate] = {}
     for candidate in candidates:
-        key = (_normalize_event_title(candidate.title), _primary_date(candidate.dates))
+        if not candidate.fingerprint:
+            candidate.fingerprint = event_fingerprint(candidate.title, candidate.dates, candidate.details.location)
+        key = (candidate.fingerprint, "")
         existing = deduped.get(key)
         if existing is None:
             deduped[key] = candidate
@@ -356,6 +717,15 @@ def _normalize_event_title(title: str) -> str:
     normalized = re.sub(r"\b(the|a|an|event|workshop|meetup|conference)\b", " ", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"[^a-z0-9]+", " ", normalized.lower())
     return " ".join(normalized.split())
+
+
+def event_fingerprint(title: str, dates: list[str], location: str | None = None) -> str:
+    """Stable key used to merge the same event across sources and scrape runs."""
+
+    parts = [_normalize_event_title(title), _primary_date(dates)]
+    if location:
+        parts.append(_normalize_event_title(location))
+    return "|".join(part for part in parts if part)
 
 
 def _primary_date(dates: list[str]) -> str:
@@ -384,6 +754,10 @@ def _merge_details(existing: EventDetails, duplicate: EventDetails) -> EventDeta
         times=_append_unique(existing.times, duplicate.times),
         prices=_append_unique(existing.prices, duplicate.prices),
         organizer=existing.organizer or duplicate.organizer,
+        start_date=existing.start_date or duplicate.start_date,
+        end_date=existing.end_date or duplicate.end_date,
+        image_url=existing.image_url or duplicate.image_url,
+        ticket_url=existing.ticket_url or duplicate.ticket_url,
     )
 
 
@@ -405,6 +779,11 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
         "source_urls": candidate.source_urls or [candidate.source_url],
         "event_urls": candidate.event_urls or [candidate.event_url],
         "duplicate_count": candidate.duplicate_count,
+        "fingerprint": candidate.fingerprint or event_fingerprint(
+            candidate.title,
+            candidate.dates,
+            candidate.details.location,
+        ),
         "snippet": candidate.snippet,
         "details": {
             "description": candidate.details.description,
@@ -413,9 +792,30 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
             "times": candidate.details.times,
             "prices": candidate.details.prices,
             "organizer": candidate.details.organizer,
+            "start_date": candidate.details.start_date,
+            "end_date": candidate.details.end_date,
+            "image_url": candidate.details.image_url,
+            "ticket_url": candidate.details.ticket_url,
         },
         "score": candidate.score,
         "dates": candidate.dates,
         "matched_terms": candidate.matched_terms,
         "scraped_at": date.today().isoformat(),
+    }
+
+
+def source_reliability_to_dict(source: SourceReliability) -> dict[str, object]:
+    """Convert source reliability telemetry into JSON-friendly output."""
+
+    return {
+        "url": source.url,
+        "name": source.name,
+        "score": source.score,
+        "events_found": source.events_found,
+        "duplicate_mentions": source.duplicate_mentions,
+        "detail_completeness": source.detail_completeness,
+        "broken": source.broken,
+        "stale": source.stale,
+        "duplicate_heavy": source.duplicate_heavy,
+        "errors": source.errors,
     }
