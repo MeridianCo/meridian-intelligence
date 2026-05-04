@@ -106,6 +106,7 @@ class EventCandidate:
     event_urls: list[str] = field(default_factory=list)
     duplicate_count: int = 1
     details: EventDetails = field(default_factory=EventDetails)
+    fingerprint: str = ""
 
 
 class BlogTextParser(HTMLParser):
@@ -275,6 +276,7 @@ def _extract_candidates(
                 source_urls=[source.url],
                 event_urls=[event_url],
                 details=details,
+                fingerprint=event_fingerprint(title, dates, details.location),
             )
         )
 
@@ -397,7 +399,9 @@ def _best_link_for_snippet(snippet: str, fallback_url: str, links: dict[str, str
 def _dedupe_candidates(candidates: list[EventCandidate]) -> list[EventCandidate]:
     deduped: dict[tuple[str, str], EventCandidate] = {}
     for candidate in candidates:
-        key = (_normalize_event_title(candidate.title), _primary_date(candidate.dates))
+        if not candidate.fingerprint:
+            candidate.fingerprint = event_fingerprint(candidate.title, candidate.dates, candidate.details.location)
+        key = (candidate.fingerprint, "")
         existing = deduped.get(key)
         if existing is None:
             deduped[key] = candidate
@@ -419,6 +423,15 @@ def _normalize_event_title(title: str) -> str:
     normalized = re.sub(r"\b(the|a|an|event|workshop|meetup|conference)\b", " ", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"[^a-z0-9]+", " ", normalized.lower())
     return " ".join(normalized.split())
+
+
+def event_fingerprint(title: str, dates: list[str], location: str | None = None) -> str:
+    """Stable key used to merge the same event across sources and scrape runs."""
+
+    parts = [_normalize_event_title(title), _primary_date(dates)]
+    if location:
+        parts.append(_normalize_event_title(location))
+    return "|".join(part for part in parts if part)
 
 
 def _primary_date(dates: list[str]) -> str:
@@ -468,6 +481,11 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
         "source_urls": candidate.source_urls or [candidate.source_url],
         "event_urls": candidate.event_urls or [candidate.event_url],
         "duplicate_count": candidate.duplicate_count,
+        "fingerprint": candidate.fingerprint or event_fingerprint(
+            candidate.title,
+            candidate.dates,
+            candidate.details.location,
+        ),
         "snippet": candidate.snippet,
         "details": {
             "description": candidate.details.description,

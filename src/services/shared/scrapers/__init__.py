@@ -5,6 +5,7 @@ from .event_builder import (
     EventSearch,
     candidate_to_dict,
     discover_event_sources,
+    event_fingerprint,
     fetch_url,
     scrape_matching_events,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "EventSearch",
     "candidate_to_dict",
     "discover_event_sources",
+    "event_fingerprint",
     "fetch_url",
     "scrape_matching_events",
 ]

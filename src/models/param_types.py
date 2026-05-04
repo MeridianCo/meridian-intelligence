@@ -30,4 +30,8 @@ class event_search_request(BaseModel):
         description="Discover event source pages from seed_urls before scraping.",
     )
     max_discovered_sources: int = Field(default=5, ge=0, le=25)
+    persist_results: bool = Field(
+        default=False,
+        description="Save discovered events in the local event database.",
+    )
     max_results: int = Field(default=10, ge=1, le=50)

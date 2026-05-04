@@ -1,7 +1,9 @@
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_matching_events
+from src.db.event_store import list_saved_events, save_event_candidates
 
 
 BLOG_HTML = """
@@ -132,6 +134,31 @@ class EventScraperTests(unittest.TestCase):
                 "https://example.com/blog/ai-founder-workshops",
                 "https://example.com/calgary-events",
             },
+        )
+
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
+    def test_saves_events_by_stable_fingerprint(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI", "healthcare"],
+            sources=[
+                BlogSource(url="https://one.example/blog"),
+                BlogSource(url="https://two.example/events"),
+            ],
+        )
+        results = scrape_matching_events(search)
+
+        with TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/events.sqlite3"
+            save_event_candidates(results, db_path)
+            save_event_candidates(results, db_path)
+            saved = list_saved_events(db_path)
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["fingerprint"], results[0].fingerprint)
+        self.assertEqual(
+            saved[0]["source_urls"],
+            ["https://one.example/blog", "https://two.example/events"],
         )
 
 
