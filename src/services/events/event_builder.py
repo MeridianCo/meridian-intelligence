@@ -28,11 +28,39 @@ DATE_PATTERN = re.compile(
     r"|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
     re.IGNORECASE,
 )
+TIME_PATTERN = re.compile(
+    r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)\b",
+    re.IGNORECASE,
+)
+PRICE_PATTERN = re.compile(
+    r"\b(?:free|\$\d+(?:\.\d{2})?|tickets?\s+(?:from|start(?:ing)? at)\s+\$\d+(?:\.\d{2})?)\b",
+    re.IGNORECASE,
+)
+VENUE_PATTERN = re.compile(
+    r"\b(?:at|venue:|location:)\s+([A-Z][A-Za-z0-9&'. -]{2,80})",
+    re.IGNORECASE,
+)
+ORGANIZER_PATTERN = re.compile(
+    r"\b(?:hosted by|presented by|organized by|organised by)\s+([A-Z][A-Za-z0-9&'. -]{2,80})",
+    re.IGNORECASE,
+)
 EVENT_WORDS = re.compile(
     r"\b(event|workshop|meetup|conference|festival|show|class|clinic|"
     r"webinar|networking|panel|summit|market|concert)\b",
     re.IGNORECASE,
 )
+
+
+@dataclass
+class EventDetails:
+    """Structured details gathered from the event snippet itself."""
+
+    description: str = ""
+    location: str | None = None
+    venue: str | None = None
+    times: list[str] = field(default_factory=list)
+    prices: list[str] = field(default_factory=list)
+    organizer: str | None = None
 
 
 @dataclass
@@ -68,6 +96,7 @@ class EventCandidate:
     source_urls: list[str] = field(default_factory=list)
     event_urls: list[str] = field(default_factory=list)
     duplicate_count: int = 1
+    details: EventDetails = field(default_factory=EventDetails)
 
 
 class BlogTextParser(HTMLParser):
@@ -167,6 +196,7 @@ def _extract_candidates(
         title = _title_from_snippet(snippet, parser.title, link_lookup.keys())
         event_url = _best_link_for_snippet(snippet, source.url, link_lookup)
         dates = sorted(set(match.group(0) for match in DATE_PATTERN.finditer(snippet)))
+        details = _extract_event_details(search, snippet)
         score, matched_terms = _score_snippet(search, snippet, title)
         if score <= 0:
             continue
@@ -181,6 +211,7 @@ def _extract_candidates(
                 matched_terms=matched_terms,
                 source_urls=[source.url],
                 event_urls=[event_url],
+                details=details,
             )
         )
 
@@ -195,7 +226,7 @@ def _date_snippets(text: str) -> list[str]:
     for index, paragraph in enumerate(paragraphs):
         if not DATE_PATTERN.search(paragraph):
             continue
-        neighbors = paragraphs[max(0, index - 1) : index + 2]
+        neighbors = paragraphs[max(0, index - 1) : index + 3]
         snippet = " ".join(neighbors)
         snippets.append(snippet[:700])
 
@@ -233,6 +264,51 @@ def _score_snippet(search: EventSearch, snippet: str, title: str) -> tuple[int, 
         score += 1
 
     return score, matched_terms
+
+
+def _extract_event_details(search: EventSearch, snippet: str) -> EventDetails:
+    description = _clean_description(snippet)
+    venue = _first_group(VENUE_PATTERN, snippet)
+    organizer = _first_group(ORGANIZER_PATTERN, snippet)
+    location = _best_location(search, snippet, venue)
+
+    return EventDetails(
+        description=description,
+        location=location,
+        venue=venue,
+        times=_unique_matches(TIME_PATTERN, snippet),
+        prices=_unique_matches(PRICE_PATTERN, snippet),
+        organizer=organizer,
+    )
+
+
+def _clean_description(snippet: str) -> str:
+    cleaned = re.sub(r"\s+", " ", snippet).strip()
+    return cleaned[:500]
+
+
+def _first_group(pattern: re.Pattern[str], text: str) -> str | None:
+    match = pattern.search(text)
+    if not match:
+        return None
+    value = re.split(r"[.;\n]", match.group(1))[0].strip()
+    return value or None
+
+
+def _best_location(search: EventSearch, snippet: str, venue: str | None) -> str | None:
+    for location in [search.city, *search.nearby_locations]:
+        if location and re.search(rf"\b{re.escape(location)}\b", snippet, re.IGNORECASE):
+            return location
+    return venue
+
+
+def _unique_matches(pattern: re.Pattern[str], text: str) -> list[str]:
+    values: list[str] = []
+    for match in pattern.finditer(text):
+        value = match.group(0).strip()
+        if value and value not in values:
+            values.append(value)
+    return values
 
 
 def _title_from_snippet(snippet: str, page_title: str, link_texts: Iterable[str]) -> str:
@@ -295,8 +371,20 @@ def _merge_duplicate(existing: EventCandidate, duplicate: EventCandidate) -> Non
     existing.dates = _append_unique(existing.dates, duplicate.dates)
     existing.matched_terms = _append_unique(existing.matched_terms, duplicate.matched_terms)
     existing.score = max(existing.score, duplicate.score) + 1
+    existing.details = _merge_details(existing.details, duplicate.details)
     if duplicate.snippet not in existing.snippet:
         existing.snippet = f"{existing.snippet} {duplicate.snippet}"[:1000]
+
+
+def _merge_details(existing: EventDetails, duplicate: EventDetails) -> EventDetails:
+    return EventDetails(
+        description=existing.description if len(existing.description) >= len(duplicate.description) else duplicate.description,
+        location=existing.location or duplicate.location,
+        venue=existing.venue or duplicate.venue,
+        times=_append_unique(existing.times, duplicate.times),
+        prices=_append_unique(existing.prices, duplicate.prices),
+        organizer=existing.organizer or duplicate.organizer,
+    )
 
 
 def _append_unique(existing: list[str], new_values: list[str]) -> list[str]:
@@ -318,6 +406,14 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
         "event_urls": candidate.event_urls or [candidate.event_url],
         "duplicate_count": candidate.duplicate_count,
         "snippet": candidate.snippet,
+        "details": {
+            "description": candidate.details.description,
+            "location": candidate.details.location,
+            "venue": candidate.details.venue,
+            "times": candidate.details.times,
+            "prices": candidate.details.prices,
+            "organizer": candidate.details.organizer,
+        },
         "score": candidate.score,
         "dates": candidate.dates,
         "matched_terms": candidate.matched_terms,

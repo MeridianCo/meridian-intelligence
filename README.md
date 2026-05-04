@@ -25,4 +25,4 @@ curl -X POST http://localhost:8000/events/search \
   }'
 ```
 
-The response includes each candidate's title, source URL, event URL, snippet, detected dates, matched terms, and relevance score.
+The response includes each candidate's title, source URL, event URL, all duplicate source/event URLs, duplicate count, snippet, detected dates, matched terms, relevance score, and gathered event details such as description, location, venue, times, prices, and organizer.

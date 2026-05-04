@@ -12,6 +12,7 @@ BLOG_HTML = """
       <h2><a href="/events/founder-ai-night">Founder AI Night</a></h2>
       <p>Founder AI Night is a networking event in Calgary on June 12, 2026.</p>
       <p>Expect practical AI demos, healthcare startup operators, and investors.</p>
+      <p>Location: Platform Calgary. Hosted by Startup TNT. Runs 6:30 pm to 9:00 pm. Tickets from $25.</p>
     </article>
     <article>
       <h2>Weekend music roundup</h2>
@@ -59,6 +60,11 @@ class EventScraperTests(unittest.TestCase):
         self.assertIn("Calgary", results[0].matched_terms)
         self.assertIn("AI", results[0].matched_terms)
         self.assertIn("healthcare", results[0].matched_terms)
+        self.assertEqual(results[0].details.location, "Calgary")
+        self.assertEqual(results[0].details.venue, "Platform Calgary")
+        self.assertEqual(results[0].details.organizer, "Startup TNT")
+        self.assertEqual(results[0].details.times, ["6:30 pm", "9:00 pm"])
+        self.assertEqual(results[0].details.prices, ["Tickets from $25"])
 
     @patch("src.services.events.event_builder.fetch_url", return_value=BLOG_HTML)
     def test_scraper_limits_results(self, _fetch):
