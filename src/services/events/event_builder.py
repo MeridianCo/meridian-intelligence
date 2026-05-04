@@ -201,7 +201,7 @@ def _relevant_links(links: Iterable[tuple[str, str]]) -> dict[str, str]:
     for text, url in links:
         if not text:
             continue
-        if EVENT_WORDS.search(text) or DATE_PATTERN.search(text):
+        if EVENT_WORDS.search(text) or DATE_PATTERN.search(text) or 3 <= len(text.split()) <= 12:
             relevant[text] = url
     return relevant
 

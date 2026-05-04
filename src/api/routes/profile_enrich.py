@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from models.param_types import enrich_request
+from src.models.param_types import enrich_request
 
 router = APIRouter()
 
