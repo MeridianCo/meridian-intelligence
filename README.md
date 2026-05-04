@@ -5,6 +5,8 @@ Consolidate information about a profile from multiple sources (primarily LinkedI
 
 The event discovery service scrapes blog or local listing pages and ranks date-bearing event snippets by city, nearby locations, and interests.
 
+Scraper implementation: `src/services/shared/scrapers/event_builder.py`
+
 Run the API:
 
 ```bash

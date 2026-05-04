@@ -1,4 +1,4 @@
-from .event_builder import (
+from src.services.shared.scrapers.event_builder import (
     BlogSource,
     EventCandidate,
     EventDetails,

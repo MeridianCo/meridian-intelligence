@@ -41,7 +41,7 @@ DUPLICATE_BLOGS = {
 
 
 class EventScraperTests(unittest.TestCase):
-    @patch("src.services.events.event_builder.fetch_url", return_value=BLOG_HTML)
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=BLOG_HTML)
     def test_scraper_scores_city_and_interest_matches(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -66,7 +66,7 @@ class EventScraperTests(unittest.TestCase):
         self.assertEqual(results[0].details.times, ["6:30 pm", "9:00 pm"])
         self.assertEqual(results[0].details.prices, ["Tickets from $25"])
 
-    @patch("src.services.events.event_builder.fetch_url", return_value=BLOG_HTML)
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=BLOG_HTML)
     def test_scraper_limits_results(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -79,7 +79,7 @@ class EventScraperTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
 
-    @patch("src.services.events.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
     def test_scraper_merges_duplicate_events_across_sites(self, _fetch):
         search = EventSearch(
             city="Calgary",

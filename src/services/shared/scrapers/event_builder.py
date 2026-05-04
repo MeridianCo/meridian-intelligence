@@ -9,7 +9,7 @@ date-bearing snippets, then score them against the requested city and interests.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.parse import urljoin
