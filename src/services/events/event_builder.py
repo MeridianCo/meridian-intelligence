@@ -15,6 +15,7 @@ from typing import Iterable
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 import re
+import unicodedata
 
 
 MONTH_PATTERN = (
@@ -64,6 +65,9 @@ class EventCandidate:
     score: int
     dates: list[str] = field(default_factory=list)
     matched_terms: list[str] = field(default_factory=list)
+    source_urls: list[str] = field(default_factory=list)
+    event_urls: list[str] = field(default_factory=list)
+    duplicate_count: int = 1
 
 
 class BlogTextParser(HTMLParser):
@@ -175,6 +179,8 @@ def _extract_candidates(
                 score=score,
                 dates=dates,
                 matched_terms=matched_terms,
+                source_urls=[source.url],
+                event_urls=[event_url],
             )
         )
 
@@ -252,12 +258,53 @@ def _best_link_for_snippet(snippet: str, fallback_url: str, links: dict[str, str
 def _dedupe_candidates(candidates: list[EventCandidate]) -> list[EventCandidate]:
     deduped: dict[tuple[str, str], EventCandidate] = {}
     for candidate in candidates:
-        key = (candidate.event_url, " ".join(candidate.dates))
+        key = (_normalize_event_title(candidate.title), _primary_date(candidate.dates))
         existing = deduped.get(key)
-        if existing is None or candidate.score > existing.score:
+        if existing is None:
             deduped[key] = candidate
+            continue
+
+        _merge_duplicate(existing, candidate)
+        if candidate.score > existing.score:
+            existing.title = candidate.title
+            existing.source_url = candidate.source_url
+            existing.event_url = candidate.event_url
+            existing.snippet = candidate.snippet
+            existing.score = candidate.score
 
     return sorted(deduped.values(), key=lambda candidate: candidate.score, reverse=True)
+
+
+def _normalize_event_title(title: str) -> str:
+    normalized = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    normalized = re.sub(r"\b(the|a|an|event|workshop|meetup|conference)\b", " ", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized.lower())
+    return " ".join(normalized.split())
+
+
+def _primary_date(dates: list[str]) -> str:
+    if not dates:
+        return ""
+    return dates[0].lower().replace(",", "")
+
+
+def _merge_duplicate(existing: EventCandidate, duplicate: EventCandidate) -> None:
+    existing.duplicate_count += duplicate.duplicate_count
+    existing.source_urls = _append_unique(existing.source_urls, duplicate.source_urls or [duplicate.source_url])
+    existing.event_urls = _append_unique(existing.event_urls, duplicate.event_urls or [duplicate.event_url])
+    existing.dates = _append_unique(existing.dates, duplicate.dates)
+    existing.matched_terms = _append_unique(existing.matched_terms, duplicate.matched_terms)
+    existing.score = max(existing.score, duplicate.score) + 1
+    if duplicate.snippet not in existing.snippet:
+        existing.snippet = f"{existing.snippet} {duplicate.snippet}"[:1000]
+
+
+def _append_unique(existing: list[str], new_values: list[str]) -> list[str]:
+    merged = list(existing)
+    for value in new_values:
+        if value and value not in merged:
+            merged.append(value)
+    return merged
 
 
 def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
@@ -267,6 +314,9 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
         "title": candidate.title,
         "source_url": candidate.source_url,
         "event_url": candidate.event_url,
+        "source_urls": candidate.source_urls or [candidate.source_url],
+        "event_urls": candidate.event_urls or [candidate.event_url],
+        "duplicate_count": candidate.duplicate_count,
         "snippet": candidate.snippet,
         "score": candidate.score,
         "dates": candidate.dates,

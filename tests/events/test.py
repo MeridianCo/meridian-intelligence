@@ -21,6 +21,23 @@ BLOG_HTML = """
 </html>
 """
 
+DUPLICATE_BLOGS = {
+    "https://one.example/blog": """
+    <html><body>
+      <h2><a href="/founder-ai-night">Founder AI Night</a></h2>
+      <p>Founder AI Night is a networking event in Calgary on June 12, 2026.</p>
+      <p>AI demos for healthcare founders.</p>
+    </body></html>
+    """,
+    "https://two.example/events": """
+    <html><body>
+      <h2><a href="/calendar/founder-ai-night">The Founder AI Night Event</a></h2>
+      <p>The Founder AI Night Event happens in Calgary on June 12, 2026.</p>
+      <p>Healthcare startup leaders and AI builders will meet.</p>
+    </body></html>
+    """,
+}
+
 
 class EventScraperTests(unittest.TestCase):
     @patch("src.services.events.event_builder.fetch_url", return_value=BLOG_HTML)
@@ -55,6 +72,33 @@ class EventScraperTests(unittest.TestCase):
         results = scrape_matching_events(search)
 
         self.assertEqual(len(results), 1)
+
+    @patch("src.services.events.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
+    def test_scraper_merges_duplicate_events_across_sites(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI", "healthcare"],
+            sources=[
+                BlogSource(url="https://one.example/blog"),
+                BlogSource(url="https://two.example/events"),
+            ],
+        )
+
+        results = scrape_matching_events(search)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].duplicate_count, 2)
+        self.assertEqual(
+            results[0].source_urls,
+            ["https://one.example/blog", "https://two.example/events"],
+        )
+        self.assertEqual(
+            results[0].event_urls,
+            [
+                "https://one.example/founder-ai-night",
+                "https://two.example/calendar/founder-ai-night",
+            ],
+        )
 
 
 if __name__ == "__main__":
