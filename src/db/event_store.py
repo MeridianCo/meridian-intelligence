@@ -119,7 +119,16 @@ def _merge_payloads(existing: dict[str, object], incoming: dict[str, object]) ->
 
 def _merge_details(existing: dict[str, object], incoming: dict[str, object]) -> dict[str, object]:
     merged = dict(existing)
-    for key in ["description", "location", "venue", "organizer"]:
+    for key in [
+        "description",
+        "location",
+        "venue",
+        "organizer",
+        "start_date",
+        "end_date",
+        "image_url",
+        "ticket_url",
+    ]:
         if not merged.get(key) and incoming.get(key):
             merged[key] = incoming[key]
         if key == "description" and len(str(incoming.get(key, ""))) > len(str(merged.get(key, ""))):

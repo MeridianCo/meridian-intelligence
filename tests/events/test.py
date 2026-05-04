@@ -50,6 +50,39 @@ SEED_HTML = """
 </body></html>
 """
 
+JSON_LD_HTML = """
+<html><head>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Event",
+    "name": "Calgary AI Healthcare Summit",
+    "description": "A Calgary conference for AI healthcare founders.",
+    "startDate": "2026-06-20T09:00:00-06:00",
+    "endDate": "2026-06-20T17:00:00-06:00",
+    "url": "https://example.com/events/ai-healthcare-summit",
+    "image": "https://example.com/summit.jpg",
+    "location": {
+      "@type": "Place",
+      "name": "Calgary Innovation Centre",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Calgary",
+        "addressRegion": "AB"
+      }
+    },
+    "organizer": {"@type": "Organization", "name": "Health AI Alberta"},
+    "offers": {
+      "@type": "Offer",
+      "url": "https://example.com/tickets",
+      "price": "49",
+      "priceCurrency": "CAD"
+    }
+  }
+  </script>
+</head><body></body></html>
+"""
+
 
 class EventScraperTests(unittest.TestCase):
     @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=BLOG_HTML)
@@ -160,6 +193,28 @@ class EventScraperTests(unittest.TestCase):
             saved[0]["source_urls"],
             ["https://one.example/blog", "https://two.example/events"],
         )
+
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=JSON_LD_HTML)
+    def test_extracts_schema_org_event_json_ld(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI", "healthcare"],
+            sources=[BlogSource(url="https://example.com/events")],
+        )
+
+        results = scrape_matching_events(search)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Calgary AI Healthcare Summit")
+        self.assertEqual(results[0].event_url, "https://example.com/events/ai-healthcare-summit")
+        self.assertEqual(results[0].details.venue, "Calgary Innovation Centre")
+        self.assertEqual(results[0].details.location, "Calgary, AB")
+        self.assertEqual(results[0].details.organizer, "Health AI Alberta")
+        self.assertEqual(results[0].details.start_date, "2026-06-20T09:00:00-06:00")
+        self.assertEqual(results[0].details.end_date, "2026-06-20T17:00:00-06:00")
+        self.assertEqual(results[0].details.image_url, "https://example.com/summit.jpg")
+        self.assertEqual(results[0].details.ticket_url, "https://example.com/tickets")
+        self.assertEqual(results[0].details.prices, ["49 CAD"])
 
 
 if __name__ == "__main__":

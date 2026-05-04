@@ -15,6 +15,7 @@ from typing import Iterable
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+import json
 import re
 import unicodedata
 
@@ -67,6 +68,10 @@ class EventDetails:
     times: list[str] = field(default_factory=list)
     prices: list[str] = field(default_factory=list)
     organizer: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    image_url: str | None = None
+    ticket_url: str | None = None
 
 
 @dataclass
@@ -120,11 +125,18 @@ class BlogTextParser(HTMLParser):
         self._current_link: str | None = None
         self._current_link_text: list[str] = []
         self._in_title = False
+        self._in_json_ld = False
+        self._json_ld_parts: list[str] = []
         self._skip_depth = 0
         self._text_parts: list[str] = []
+        self.json_ld_blocks: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
+        if tag == "script" and str(attrs_dict.get("type", "")).lower() == "application/ld+json":
+            self._in_json_ld = True
+            self._json_ld_parts = []
+            return
         if tag in {"script", "style", "noscript", "svg"}:
             self._skip_depth += 1
             return
@@ -137,6 +149,13 @@ class BlogTextParser(HTMLParser):
             self._text_parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._in_json_ld:
+            json_text = "".join(self._json_ld_parts).strip()
+            if json_text:
+                self.json_ld_blocks.append(json_text)
+            self._in_json_ld = False
+            self._json_ld_parts = []
+            return
         if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
             self._skip_depth -= 1
             return
@@ -149,6 +168,9 @@ class BlogTextParser(HTMLParser):
             self._current_link_text = []
 
     def handle_data(self, data: str) -> None:
+        if self._in_json_ld:
+            self._json_ld_parts.append(data)
+            return
         if self._skip_depth:
             return
         text = " ".join(data.split())
@@ -254,7 +276,7 @@ def _extract_candidates(
 ) -> list[EventCandidate]:
     snippets = _date_snippets(parser.text)
     link_lookup = _relevant_links(parser.links)
-    candidates: list[EventCandidate] = []
+    candidates: list[EventCandidate] = _extract_json_ld_candidates(search, source, parser)
 
     for snippet in snippets:
         title = _title_from_snippet(snippet, parser.title, link_lookup.keys())
@@ -281,6 +303,145 @@ def _extract_candidates(
         )
 
     return sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
+
+
+def _extract_json_ld_candidates(
+    search: EventSearch,
+    source: BlogSource,
+    parser: BlogTextParser,
+) -> list[EventCandidate]:
+    candidates: list[EventCandidate] = []
+    for block in parser.json_ld_blocks:
+        for event in _iter_json_ld_events(block):
+            title = str(event.get("name") or parser.title or "Untitled event")
+            event_url = str(event.get("url") or source.url)
+            description = str(event.get("description") or "")
+            details = _details_from_json_ld(search, event, description)
+            dates = [value for value in [details.start_date, details.end_date] if value]
+            score, matched_terms = _score_snippet(search, description, title)
+            if score <= 0:
+                continue
+            candidates.append(
+                EventCandidate(
+                    title=title[:120],
+                    source_url=source.url,
+                    event_url=event_url,
+                    snippet=description[:700] or title,
+                    score=score + 2,
+                    dates=dates,
+                    matched_terms=matched_terms,
+                    source_urls=[source.url],
+                    event_urls=[event_url],
+                    details=details,
+                    fingerprint=event_fingerprint(title, dates, details.location),
+                )
+            )
+    return candidates
+
+
+def _iter_json_ld_events(block: str) -> Iterable[dict[str, object]]:
+    try:
+        data = json.loads(block)
+    except json.JSONDecodeError:
+        return []
+
+    nodes = data if isinstance(data, list) else [data]
+    events: list[dict[str, object]] = []
+    while nodes:
+        node = nodes.pop(0)
+        if not isinstance(node, dict):
+            continue
+        graph = node.get("@graph")
+        if isinstance(graph, list):
+            nodes.extend(graph)
+        if _is_json_ld_event(node):
+            events.append(node)
+    return events
+
+
+def _is_json_ld_event(node: dict[str, object]) -> bool:
+    event_type = node.get("@type")
+    if isinstance(event_type, list):
+        return any(str(item).lower() == "event" for item in event_type)
+    return str(event_type).lower() == "event"
+
+
+def _details_from_json_ld(
+    search: EventSearch,
+    event: dict[str, object],
+    description: str,
+) -> EventDetails:
+    location, venue = _location_from_json_ld(event.get("location"))
+    organizer = _name_from_json_ld(event.get("organizer"))
+    offer = _first_item(event.get("offers"))
+    ticket_url = _string_value(offer.get("url")) if isinstance(offer, dict) else None
+    price = _price_from_json_ld(offer)
+    start_date = _string_value(event.get("startDate"))
+    end_date = _string_value(event.get("endDate"))
+
+    return EventDetails(
+        description=description[:500],
+        location=location or _best_location(search, description, venue),
+        venue=venue,
+        times=_append_unique([], [start_date or "", end_date or ""]),
+        prices=[price] if price else [],
+        organizer=organizer,
+        start_date=start_date,
+        end_date=end_date,
+        image_url=_image_from_json_ld(event.get("image")),
+        ticket_url=ticket_url,
+    )
+
+
+def _location_from_json_ld(value: object) -> tuple[str | None, str | None]:
+    location = _first_item(value)
+    if isinstance(location, dict):
+        venue = _string_value(location.get("name"))
+        address = location.get("address")
+        if isinstance(address, dict):
+            city = _string_value(address.get("addressLocality"))
+            region = _string_value(address.get("addressRegion"))
+            locality = ", ".join(part for part in [city, region] if part)
+            return locality or venue, venue
+        return venue, venue
+    return _string_value(location), _string_value(location)
+
+
+def _name_from_json_ld(value: object) -> str | None:
+    item = _first_item(value)
+    if isinstance(item, dict):
+        return _string_value(item.get("name"))
+    return _string_value(item)
+
+
+def _image_from_json_ld(value: object) -> str | None:
+    item = _first_item(value)
+    if isinstance(item, dict):
+        return _string_value(item.get("url"))
+    return _string_value(item)
+
+
+def _price_from_json_ld(value: object) -> str | None:
+    offer = _first_item(value)
+    if not isinstance(offer, dict):
+        return None
+    price = _string_value(offer.get("price"))
+    currency = _string_value(offer.get("priceCurrency"))
+    if price and currency:
+        return f"{price} {currency}"
+    return price
+
+
+def _first_item(value: object) -> object:
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def _string_value(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _date_snippets(text: str) -> list[str]:
@@ -460,6 +621,10 @@ def _merge_details(existing: EventDetails, duplicate: EventDetails) -> EventDeta
         times=_append_unique(existing.times, duplicate.times),
         prices=_append_unique(existing.prices, duplicate.prices),
         organizer=existing.organizer or duplicate.organizer,
+        start_date=existing.start_date or duplicate.start_date,
+        end_date=existing.end_date or duplicate.end_date,
+        image_url=existing.image_url or duplicate.image_url,
+        ticket_url=existing.ticket_url or duplicate.ticket_url,
     )
 
 
@@ -494,6 +659,10 @@ def candidate_to_dict(candidate: EventCandidate) -> dict[str, object]:
             "times": candidate.details.times,
             "prices": candidate.details.prices,
             "organizer": candidate.details.organizer,
+            "start_date": candidate.details.start_date,
+            "end_date": candidate.details.end_date,
+            "image_url": candidate.details.image_url,
+            "ticket_url": candidate.details.ticket_url,
         },
         "score": candidate.score,
         "dates": candidate.dates,
