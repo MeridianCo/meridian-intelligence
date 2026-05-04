@@ -21,4 +21,13 @@ class event_search_request(BaseModel):
         default_factory=list,
         description="Blog or local listing URLs to scrape for events.",
     )
+    seed_urls: list[AnyHttpUrl] = Field(
+        default_factory=list,
+        description="Pages to inspect for likely local event/blog/calendar source links.",
+    )
+    discover_sources: bool = Field(
+        default=False,
+        description="Discover event source pages from seed_urls before scraping.",
+    )
+    max_discovered_sources: int = Field(default=5, ge=0, le=25)
     max_results: int = Field(default=10, ge=1, le=50)

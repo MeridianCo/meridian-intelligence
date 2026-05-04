@@ -4,6 +4,7 @@ from src.services.shared.scrapers.event_builder import (
     EventDetails,
     EventSearch,
     candidate_to_dict,
+    discover_event_sources,
     scrape_matching_events,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "EventDetails",
     "EventSearch",
     "candidate_to_dict",
+    "discover_event_sources",
     "scrape_matching_events",
 ]

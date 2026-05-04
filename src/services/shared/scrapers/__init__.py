@@ -4,6 +4,7 @@ from .event_builder import (
     EventDetails,
     EventSearch,
     candidate_to_dict,
+    discover_event_sources,
     fetch_url,
     scrape_matching_events,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "EventDetails",
     "EventSearch",
     "candidate_to_dict",
+    "discover_event_sources",
     "fetch_url",
     "scrape_matching_events",
 ]

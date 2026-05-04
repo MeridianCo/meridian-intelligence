@@ -13,6 +13,7 @@ from datetime import date
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.parse import urljoin
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import re
 import unicodedata
@@ -49,6 +50,11 @@ EVENT_WORDS = re.compile(
     r"webinar|networking|panel|summit|market|concert)\b",
     re.IGNORECASE,
 )
+SOURCE_WORDS = re.compile(
+    r"\b(event|events|calendar|things to do|what'?s on|happening|"
+    r"meetup|workshop|conference|festival|community|blog)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -69,6 +75,7 @@ class BlogSource:
 
     url: str
     name: str | None = None
+    discovery_score: int = 0
 
 
 @dataclass
@@ -79,7 +86,9 @@ class EventSearch:
     interests: list[str] = field(default_factory=list)
     nearby_locations: list[str] = field(default_factory=list)
     sources: list[BlogSource] = field(default_factory=list)
+    seed_urls: list[str] = field(default_factory=list)
     max_results: int = 10
+    max_discovered_sources: int = 5
 
 
 @dataclass
@@ -159,13 +168,38 @@ def scrape_matching_events(search: EventSearch) -> list[EventCandidate]:
     """Fetch configured blogs and return event candidates sorted by relevance."""
 
     candidates: list[EventCandidate] = []
-    for source in search.sources:
+    sources = _append_sources(
+        search.sources,
+        discover_event_sources(search)[: search.max_discovered_sources],
+    )
+    for source in sources:
         html = fetch_url(source.url)
         parser = BlogTextParser(source.url)
         parser.feed(html)
         candidates.extend(_extract_candidates(search, source, parser))
 
     return _dedupe_candidates(candidates)[: search.max_results]
+
+
+def discover_event_sources(search: EventSearch) -> list[BlogSource]:
+    """Discover likely event/listing pages from user-provided seed URLs."""
+
+    discovered: dict[str, BlogSource] = {}
+    for seed_url in search.seed_urls:
+        html = fetch_url(seed_url)
+        parser = BlogTextParser(seed_url)
+        parser.feed(html)
+        for text, url in parser.links:
+            if not _same_site(seed_url, url):
+                continue
+            score = _score_source_link(search, text, url)
+            if score <= 0:
+                continue
+            existing = discovered.get(url)
+            if existing is None or score > existing.discovery_score:
+                discovered[url] = BlogSource(url=url, name=text or None, discovery_score=score)
+
+    return sorted(discovered.values(), key=lambda source: source.discovery_score, reverse=True)
 
 
 def fetch_url(url: str, timeout: int = 10) -> str:
@@ -181,6 +215,35 @@ def fetch_url(url: str, timeout: int = 10) -> str:
     with urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
+
+
+def _score_source_link(search: EventSearch, text: str, url: str) -> int:
+    haystack = f"{text} {url}".lower()
+    score = 0
+    if SOURCE_WORDS.search(haystack):
+        score += 3
+    if search.city.lower() in haystack:
+        score += 2
+    for interest in search.interests:
+        if interest.lower() in haystack:
+            score += 2
+    for nearby in search.nearby_locations:
+        if nearby.lower() in haystack:
+            score += 1
+    return score
+
+
+def _same_site(seed_url: str, candidate_url: str) -> bool:
+    seed_host = urlparse(seed_url).netloc.lower().removeprefix("www.")
+    candidate_host = urlparse(candidate_url).netloc.lower().removeprefix("www.")
+    return bool(seed_host and candidate_host and seed_host == candidate_host)
+
+
+def _append_sources(existing: list[BlogSource], discovered: list[BlogSource]) -> list[BlogSource]:
+    sources_by_url = {source.url: source for source in existing}
+    for source in discovered:
+        sources_by_url.setdefault(source.url, source)
+    return list(sources_by_url.values())
 
 
 def _extract_candidates(

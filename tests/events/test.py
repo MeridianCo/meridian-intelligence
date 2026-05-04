@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.services.events import BlogSource, EventSearch, scrape_matching_events
+from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_matching_events
 
 
 BLOG_HTML = """
@@ -38,6 +38,15 @@ DUPLICATE_BLOGS = {
     </body></html>
     """,
 }
+
+SEED_HTML = """
+<html><body>
+  <a href="/calgary-events">Calgary events calendar</a>
+  <a href="/blog/ai-founder-workshops">AI founder workshops blog</a>
+  <a href="https://external.example/events">External events</a>
+  <a href="/contact">Contact</a>
+</body></html>
+"""
 
 
 class EventScraperTests(unittest.TestCase):
@@ -104,6 +113,25 @@ class EventScraperTests(unittest.TestCase):
                 "https://one.example/founder-ai-night",
                 "https://two.example/calendar/founder-ai-night",
             ],
+        )
+
+    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=SEED_HTML)
+    def test_discovers_event_sources_from_seed_pages(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI"],
+            seed_urls=["https://example.com"],
+            max_discovered_sources=2,
+        )
+
+        sources = discover_event_sources(search)
+
+        self.assertEqual(
+            set(source.url for source in sources[:2]),
+            {
+                "https://example.com/blog/ai-founder-workshops",
+                "https://example.com/calgary-events",
+            },
         )
 
 
