@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # routes
-from src.api.routes import root_router, enrich_router
+from src.api.routes import root_router, enrich_router, events_router
 
 # init fastapi app
 app = FastAPI(title="Profile Intelligience Engine API")
@@ -19,6 +19,7 @@ app.add_middleware(
 # include routers for each endpoint
 app.include_router(root_router)
 app.include_router(enrich_router, prefix="/enrich")
+app.include_router(events_router, prefix="/events")
 
 # (to be replaced by docker command in prod)
 if __name__ == "__main__":
