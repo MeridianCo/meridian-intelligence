@@ -1,99 +1,87 @@
-"""SQLite persistence for discovered events."""
+"""Supabase persistence for discovered events."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import json
-import sqlite3
+from typing import Any
 
 from src.services.shared.scrapers.event_builder import EventCandidate, candidate_to_dict
 
 
-DEFAULT_EVENT_DB = Path("data/events.sqlite3")
+EVENTS_TABLE = "events"
 
 
 def save_event_candidates(
     candidates: list[EventCandidate],
-    db_path: str | Path = DEFAULT_EVENT_DB,
+    supabase_client: Any | None = None,
 ) -> list[dict[str, object]]:
-    """Upsert event candidates by stable fingerprint."""
+    """Upsert event candidates into Supabase by stable fingerprint."""
 
-    path = Path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    try:
-        _ensure_schema(connection)
-        saved = [_upsert_candidate(connection, candidate) for candidate in candidates]
-        connection.commit()
-    finally:
-        connection.close()
-    return saved
-
-
-def list_saved_events(db_path: str | Path = DEFAULT_EVENT_DB) -> list[dict[str, object]]:
-    """Return saved events as JSON-friendly dictionaries."""
-
-    path = Path(db_path)
-    if not path.exists():
+    client = supabase_client or _default_supabase_client()
+    payloads = [_payload_for_supabase(candidate) for candidate in candidates]
+    if not payloads:
         return []
-    connection = sqlite3.connect(path)
-    try:
-        connection.row_factory = sqlite3.Row
-        _ensure_schema(connection)
-        rows = connection.execute(
-            "SELECT payload FROM events ORDER BY score DESC, updated_at DESC"
-        ).fetchall()
-    finally:
-        connection.close()
-    return [json.loads(row["payload"]) for row in rows]
+    existing = _existing_payloads(client, [str(payload["fingerprint"]) for payload in payloads])
+    for payload in payloads:
+        fingerprint = str(payload["fingerprint"])
+        if fingerprint in existing:
+            merged_payload = _merge_payloads(existing[fingerprint], dict(payload["payload"]))
+            payload["payload"] = merged_payload
+            payload["score"] = merged_payload["score"]
+            payload["duplicate_count"] = merged_payload["duplicate_count"]
+    client.table(EVENTS_TABLE).upsert(payloads, on_conflict="fingerprint").execute()
+    return [payload["payload"] for payload in payloads]
 
 
-def _ensure_schema(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS events (
-            fingerprint TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            duplicate_count INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
+def list_saved_events(supabase_client: Any | None = None) -> list[dict[str, object]]:
+    """Return saved event payloads from Supabase."""
+
+    client = supabase_client or _default_supabase_client()
+    result = (
+        client.table(EVENTS_TABLE)
+        .select("payload")
+        .order("score", desc=True)
+        .execute()
     )
+    return [row.get("payload", {}) for row in result.data or []]
 
 
-def _upsert_candidate(connection: sqlite3.Connection, candidate: EventCandidate) -> dict[str, object]:
+def _default_supabase_client() -> Any:
+    from src.db import supabase
+
+    if supabase is None:
+        raise RuntimeError(
+            "Supabase client is not configured. Install supabase and set SUPABASE_URL "
+            "and SUPABASE_SERVICE_ROLE_KEY."
+        )
+    return supabase
+
+
+def _payload_for_supabase(candidate: EventCandidate) -> dict[str, object]:
     payload = candidate_to_dict(candidate)
     fingerprint = str(payload["fingerprint"])
-    existing = connection.execute(
-        "SELECT payload FROM events WHERE fingerprint = ?",
-        (fingerprint,),
-    ).fetchone()
-    if existing:
-        payload = _merge_payloads(json.loads(existing[0]), payload)
+    return {
+        "fingerprint": fingerprint,
+        "title": payload["title"],
+        "payload": payload,
+        "score": payload["score"],
+        "duplicate_count": payload["duplicate_count"],
+    }
 
-    connection.execute(
-        """
-        INSERT INTO events (fingerprint, title, payload, score, duplicate_count)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(fingerprint) DO UPDATE SET
-            title = excluded.title,
-            payload = excluded.payload,
-            score = excluded.score,
-            duplicate_count = excluded.duplicate_count,
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (
-            fingerprint,
-            payload["title"],
-            json.dumps(payload, sort_keys=True),
-            payload["score"],
-            payload["duplicate_count"],
-        ),
+
+def _existing_payloads(client: Any, fingerprints: list[str]) -> dict[str, dict[str, object]]:
+    if not fingerprints:
+        return {}
+    result = (
+        client.table(EVENTS_TABLE)
+        .select("fingerprint,payload")
+        .in_("fingerprint", fingerprints)
+        .execute()
     )
-    return payload
+    return {
+        str(row["fingerprint"]): dict(row.get("payload", {}))
+        for row in result.data or []
+        if row.get("fingerprint")
+    }
 
 
 def _merge_payloads(existing: dict[str, object], incoming: dict[str, object]) -> dict[str, object]:
