@@ -1,9 +1,13 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 # routes
-from src.api.routes import root_router, enrich_router, events_router
+from src.api.routes import root_router, enrich_router, events_router, event_discovery_router
+
+# Load environment variables from .env if present.
+load_dotenv()
 
 # init fastapi app
 app = FastAPI(title="Profile Intelligience Engine API")
@@ -20,6 +24,7 @@ app.add_middleware(
 app.include_router(root_router)
 app.include_router(enrich_router, prefix="/enrich")
 app.include_router(events_router, prefix="/events")
+app.include_router(event_discovery_router, prefix="/event-discovery")
 
 # (to be replaced by docker command in prod)
 if __name__ == "__main__":
