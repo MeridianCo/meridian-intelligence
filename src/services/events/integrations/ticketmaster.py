@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Any
+import os
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -59,6 +60,9 @@ class TicketmasterDiscoveryProvider:
         items = embedded.get("events") or []
         if not isinstance(items, list):
             return []
+
+        if os.getenv("EVENT_DISCOVERY_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}:
+            print(f"[ticketmaster] url={url} returned_events={len(items)}")
 
         results: list[ExternalEventResult] = []
         for item in items:
