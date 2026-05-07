@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
+from services.events.discovery import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
 from src.db.event_store import list_saved_events, save_event_candidates
 
 
@@ -128,7 +128,7 @@ class FakeSupabase:
 
 
 class EventScraperTests(unittest.TestCase):
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=BLOG_HTML)
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", return_value=BLOG_HTML)
     def test_scraper_scores_city_and_interest_matches(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -153,7 +153,7 @@ class EventScraperTests(unittest.TestCase):
         self.assertEqual(results[0].details.times, ["6:30 pm", "9:00 pm"])
         self.assertEqual(results[0].details.prices, ["Tickets from $25"])
 
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=BLOG_HTML)
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", return_value=BLOG_HTML)
     def test_scraper_limits_results(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -166,7 +166,7 @@ class EventScraperTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
 
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
     def test_scraper_merges_duplicate_events_across_sites(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -193,7 +193,7 @@ class EventScraperTests(unittest.TestCase):
             ],
         )
 
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=SEED_HTML)
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", return_value=SEED_HTML)
     def test_discovers_event_sources_from_seed_pages(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -212,7 +212,7 @@ class EventScraperTests(unittest.TestCase):
             },
         )
 
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", side_effect=lambda url: DUPLICATE_BLOGS[url])
     def test_saves_events_by_stable_fingerprint(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -236,7 +236,7 @@ class EventScraperTests(unittest.TestCase):
             ["https://one.example/blog", "https://two.example/events"],
         )
 
-    @patch("src.services.shared.scrapers.event_builder.fetch_url", return_value=JSON_LD_HTML)
+    @patch("src.services.shared.scrapers.event_scraper.fetch_url", return_value=JSON_LD_HTML)
     def test_extracts_schema_org_event_json_ld(self, _fetch):
         search = EventSearch(
             city="Calgary",
@@ -259,7 +259,7 @@ class EventScraperTests(unittest.TestCase):
         self.assertEqual(results[0].details.prices, ["49 CAD"])
 
     @patch(
-        "src.services.shared.scrapers.event_builder.fetch_url",
+        "src.services.shared.scrapers.event_scraper.fetch_url",
         side_effect=lambda url: BLOG_HTML if "good" in url else (_ for _ in ()).throw(RuntimeError("boom")),
     )
     def test_scores_source_reliability(self, _fetch):

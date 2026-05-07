@@ -5,9 +5,9 @@ import os
 from dataclasses import dataclass
 
 from src.models.event_discovery import EventDiscoveryQuery, EventDiscoveryResponse, ExternalEventResult
-from src.services.events.integrations.eventbrite import EventbriteProvider
-from src.services.events.integrations.serpapi import SerpApiGoogleEventsProvider
-from src.services.events.integrations.ticketmaster import TicketmasterDiscoveryProvider
+from src.services.events.discovery.integrations.eventbrite import EventbriteProvider
+from src.services.events.discovery.integrations.serpapi import SerpApiGoogleEventsProvider
+from src.services.events.discovery.integrations.ticketmaster import TicketmasterDiscoveryProvider
 
 
 def _env_bool(name: str, default: bool) -> bool:

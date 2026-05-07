@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from src.models.event_discovery import EventDiscoveryQuery, EventDiscoveryResponse
-from src.services.events.event_discovery import EventDiscoveryService
+from src.services.events.discovery.event_discovery import EventDiscoveryService
 
 
 router = APIRouter()

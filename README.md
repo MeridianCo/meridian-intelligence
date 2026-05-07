@@ -5,7 +5,7 @@ Consolidate information about a profile from multiple sources (primarily LinkedI
 
 The event discovery service scrapes blog or local listing pages and ranks date-bearing event snippets by city, nearby locations, and interests.
 
-Scraper implementation: `src/services/shared/scrapers/event_builder.py`
+Scraper implementation: `src/services/shared/scrapers/event_scraper.py`
 
 Run the API:
 
@@ -16,7 +16,7 @@ uvicorn src.main:app --reload
 Search for matching events:
 
 ```bash
-curl -X POST http://localhost:8000/events/search \
+curl -X POST http://localhost:8000/events/scrape/search \
   -H "Content-Type: application/json" \
   -d '{
     "city": "Calgary",
@@ -51,7 +51,7 @@ Required: provide `query` plus either `city` or both `latitude` + `longitude`. I
 Search (POST):
 
 ```bash
-curl -X POST http://localhost:8000/event-discovery/search \
+curl -X POST http://localhost:8000/events/discovery/search \
   -H "Content-Type: application/json" \
   -d '{
     "query": "networking",

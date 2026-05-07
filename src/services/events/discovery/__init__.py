@@ -1,4 +1,4 @@
-from .event_builder import (
+from src.services.events.scrape.event_scraping import (
     BlogSource,
     EventCandidate,
     EventDetails,
@@ -8,7 +8,6 @@ from .event_builder import (
     candidate_to_dict,
     discover_event_sources,
     event_fingerprint,
-    fetch_url,
     scrape_events,
     scrape_matching_events,
     source_reliability_to_dict,
@@ -24,7 +23,6 @@ __all__ = [
     "candidate_to_dict",
     "discover_event_sources",
     "event_fingerprint",
-    "fetch_url",
     "scrape_events",
     "scrape_matching_events",
     "source_reliability_to_dict",
