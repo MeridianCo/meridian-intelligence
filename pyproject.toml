@@ -24,7 +24,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/outreach_engine"]
+packages = ["src/meridian_intelligence"]
 
 [tool.ruff]
 line-length = 88
