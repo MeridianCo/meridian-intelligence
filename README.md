@@ -1,22 +1,35 @@
 # ai-profile-intelligience
 Consolidate information about a profile from multiple sources (primarily LinkedIn) so the rest of the system has structured context.
 
+Run the API:
+
+```bash
+# Create virtual environment
+python -m venv .venv
+
+# Enter virtual environment
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run with uvicorn
+uvicorn src.api.main:app --reload
+
+# OR run as a Python module
+python -m src.api.main
+# (or: python3 -m src.api.main)
+```
 ## Event blog scraper
 
 The event discovery service scrapes blog or local listing pages and ranks date-bearing event snippets by city, nearby locations, and interests.
 
-Scraper implementation: `src/services/shared/scrapers/event_builder.py`
-
-Run the API:
-
-```bash
-uvicorn src.main:app --reload
-```
+Scraper implementation: `src/services/shared/scrapers/event_scraper.py`
 
 Search for matching events:
 
 ```bash
-curl -X POST http://localhost:8000/events/search \
+curl -X POST http://localhost:8000/events/scrape/search \
   -H "Content-Type: application/json" \
   -d '{
     "city": "Calgary",
@@ -51,7 +64,7 @@ Required: provide `query` plus either `city` or both `latitude` + `longitude`. I
 Search (POST):
 
 ```bash
-curl -X POST http://localhost:8000/event-discovery/search \
+curl -X POST http://localhost:8000/events/discovery/search \
   -H "Content-Type: application/json" \
   -d '{
     "query": "networking",

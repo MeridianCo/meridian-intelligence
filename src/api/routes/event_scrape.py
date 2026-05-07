@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.db.event_store import save_event_candidates
 from src.models.param_types import event_search_request
-from src.services.events import (
+from src.services.events.scrape import (
     BlogSource,
     EventSearch,
     candidate_to_dict,

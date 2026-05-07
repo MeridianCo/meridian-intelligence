@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.services.shared.scrapers.event_builder import EventCandidate, candidate_to_dict
+from src.services.events.scrape.event_scraping import EventCandidate, candidate_to_dict
 
-
-EVENTS_TABLE = "events"
-
+EVENTS_TABLE = "events_scraped"
 
 def save_event_candidates(
     candidates: list[EventCandidate],
