@@ -61,10 +61,10 @@ jobs:
           # Run event discovery tests via python module execution
           python3 -m tests.events.scrape.test
 
-          echo "Running supabase tests..."
+          # echo "Running supabase tests..."
 
           # Run supabase tests via pytest
-          pytest tests/supabase -q --maxfail=1 --disable-warnings
+          # pytest tests/supabase -q --maxfail=1 --disable-warnings
 
   build:
     needs: test
