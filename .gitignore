@@ -8,6 +8,3 @@ __pycache__/
 
 # Environment variables
 .env
-
-# Local event scraper database
-data/

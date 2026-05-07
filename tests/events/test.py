@@ -1,5 +1,4 @@
 import unittest
-from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from src.services.events import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
@@ -82,6 +81,50 @@ JSON_LD_HTML = """
   </script>
 </head><body></body></html>
 """
+
+
+class FakeSupabaseResult:
+    def __init__(self, data=None):
+        self.data = data or []
+
+
+class FakeSupabaseTable:
+    def __init__(self, client):
+        self.client = client
+        self._fingerprints = None
+        self._upsert_payloads = None
+
+    def select(self, _columns):
+        return self
+
+    def in_(self, _column, fingerprints):
+        self._fingerprints = set(fingerprints)
+        return self
+
+    def order(self, _column, desc=False):
+        return self
+
+    def upsert(self, payloads, on_conflict=None):
+        self._upsert_payloads = payloads
+        return self
+
+    def execute(self):
+        if self._upsert_payloads is not None:
+            for payload in self._upsert_payloads:
+                self.client.rows[str(payload["fingerprint"])] = payload
+            return FakeSupabaseResult(list(self._upsert_payloads))
+        rows = list(self.client.rows.values())
+        if self._fingerprints is not None:
+            rows = [row for row in rows if row["fingerprint"] in self._fingerprints]
+        return FakeSupabaseResult(rows)
+
+
+class FakeSupabase:
+    def __init__(self):
+        self.rows = {}
+
+    def table(self, _name):
+        return FakeSupabaseTable(self)
 
 
 class EventScraperTests(unittest.TestCase):
@@ -181,11 +224,10 @@ class EventScraperTests(unittest.TestCase):
         )
         results = scrape_matching_events(search)
 
-        with TemporaryDirectory() as temp_dir:
-            db_path = f"{temp_dir}/events.sqlite3"
-            save_event_candidates(results, db_path)
-            save_event_candidates(results, db_path)
-            saved = list_saved_events(db_path)
+        client = FakeSupabase()
+        save_event_candidates(results, client)
+        save_event_candidates(results, client)
+        saved = list_saved_events(client)
 
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["fingerprint"], results[0].fingerprint)
