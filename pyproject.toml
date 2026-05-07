@@ -17,12 +17,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pytest",
+    "pytest-asyncio",
     "httpx",
     "ruff",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/meridian_intelligence"]
+packages = ["src/outreach_engine"]
 
 [tool.ruff]
 line-length = 88

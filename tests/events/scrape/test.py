@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from services.events.discovery import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
+from src.services.events.discovery import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
 from src.db.event_store import list_saved_events, save_event_candidates
 
 
