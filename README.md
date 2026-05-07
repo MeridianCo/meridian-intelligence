@@ -1,17 +1,22 @@
 # ai-profile-intelligience
 Consolidate information about a profile from multiple sources (primarily LinkedIn) so the rest of the system has structured context.
 
+Run the API:
+
+```bash
+uvicorn src.api.main:app --reload
+```
+
+or 
+
+```bash
+python (or python3) -m src.api.main
+
 ## Event blog scraper
 
 The event discovery service scrapes blog or local listing pages and ranks date-bearing event snippets by city, nearby locations, and interests.
 
 Scraper implementation: `src/services/shared/scrapers/event_scraper.py`
-
-Run the API:
-
-```bash
-uvicorn src.main:app --reload
-```
 
 Search for matching events:
 
