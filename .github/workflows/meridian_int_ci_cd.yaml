@@ -5,6 +5,11 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: meridian-495517
+  IMAGE_NAME: meridian-intelligence
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -20,10 +25,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package and dependencies
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements.txt') }}
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install -e ".[dev]"
+          fi
 
       - name: Run tests
         env:
@@ -52,6 +68,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+
     permissions:
       contents: read
       id-token: write
@@ -66,16 +83,34 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
       - name: Build Docker image
         run: |
           docker build \
-            -t us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:${{ github.sha }} \
-            -t us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:latest \
+            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:latest \
             .
 
       - name: Push Docker image
         run: |
-          docker push us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:${{ github.sha }}
-          docker push us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:latest
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy meridian-intelligence \
+            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --region us-central1 \
+            --platform managed \
+            --allow-unauthenticated \
+            --update-env-vars GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            --update-env-vars SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --update-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+            --update-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --update-env-vars SERPAPI_API_KEY=${{ secrets.SERPAPI_API_KEY }} \
+            --update-env-vars EVENTBRITE_PRIVATE_TOKEN=${{ secrets.EVENTBRITE_PRIVATE_TOKEN }} \
+            --update-env-vars TICKETMASTER_API_KEY=${{ secrets.TICKETMASTER_API_KEY }} \
+            --update-env-vars EVENT_DISCOVERY_ENABLE_SERPAPI=true \
+            --update-env-vars EVENT_DISCOVERY_ENABLE_EVENTBRITE=false \
+            --update-env-vars EVENT_DISCOVERY_ENABLE_TICKETMASTER=true
