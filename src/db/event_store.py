@@ -6,9 +6,7 @@ from typing import Any
 
 from src.services.events.scrape.event_scraping import EventCandidate, candidate_to_dict
 
-
-EVENTS_TABLE = "events"
-
+EVENTS_TABLE = "events_scraped"
 
 def save_event_candidates(
     candidates: list[EventCandidate],
