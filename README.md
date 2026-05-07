@@ -4,14 +4,22 @@ Consolidate information about a profile from multiple sources (primarily LinkedI
 Run the API:
 
 ```bash
+# Create virtual environment
+python -m venv .venv
+
+# Enter virtual environment
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run with uvicorn
 uvicorn src.api.main:app --reload
+
+# OR run as a Python module
+python -m src.api.main
+# (or: python3 -m src.api.main)
 ```
-
-or 
-
-```bash
-python (or python3) -m src.api.main
-
 ## Event blog scraper
 
 The event discovery service scrapes blog or local listing pages and ranks date-bearing event snippets by city, nearby locations, and interests.
