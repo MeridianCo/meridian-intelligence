@@ -1,0 +1,81 @@
+name: CI/CD - Meridian Intelligence
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.12]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+          EVENTBRITE_PRIVATE_TOKEN: ${{ secrets.EVENTBRITE_PRIVATE_TOKEN }}
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+
+          EVENT_DISCOVERY_ENABLE_SERPAPI: true
+          EVENT_DISCOVERY_ENABLE_EVENTBRITE: false
+          EVENT_DISCOVERY_ENABLE_TICKETMASTER: true
+
+        run: |
+          if [ -d tests ]; then
+            echo "Running tests..."
+            pytest tests/events -q --maxfail=1 --disable-warnings
+            pytest tests/supabase/read -q --maxfail=1 --disable-warnings
+          else
+            echo "No tests directory found, skipping"
+          fi
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:latest \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/meridian-495517/cloud-run-source-deploy/meridian-intelligence:latest
