@@ -105,7 +105,7 @@ jobs:
             --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --region us-central1 \
             --platform managed \
-            --allow-unauthenticated \
+            --no-allow-unauthenticated \
             --update-env-vars GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
             --update-env-vars SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
             --update-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
