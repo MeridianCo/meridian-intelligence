@@ -22,7 +22,7 @@ app.add_middleware(
 
 # include routers for each endpoint
 app.include_router(root_router)
-app.include_router(enrich_router, prefix="/enrich")
+app.include_router(enrich_router, prefix="profile/enrich")
 app.include_router(events_scrape_router, prefix="/events/scrape")
 app.include_router(event_discovery_router, prefix="/events/discovery")
 
