@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 from src.db.event_store import save_event_candidates
 from src.models.param_types import event_search_request
@@ -9,9 +9,11 @@ from src.services.events.scrape import (
     scrape_events,
     source_reliability_to_dict,
 )
+from src.api.middleware.auth import verify_bearer_token, limiter
 
-router = APIRouter()
-
+router = APIRouter(
+    dependencies=[Depends(verify_bearer_token)],
+)
 
 @router.get("/")
 async def root():
@@ -23,6 +25,7 @@ async def root():
 
 
 @router.post("/search")
+@limiter.limit("15/minute")
 async def search_events(request: event_search_request):
     if not request.source_urls and not request.seed_urls:
         raise HTTPException(
