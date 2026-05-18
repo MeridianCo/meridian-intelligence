@@ -41,3 +41,15 @@ def get_current_user(authorization: str = Header(...)) -> str:
         raise HTTPException(status_code=404, detail="User not found")
     
     return user_id
+
+def verify_bearer_token(authorization: str = Header(...)) -> dict:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return payload # only returned for easier debugging, not used in current endpoints

@@ -3,15 +3,17 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.api.middleware.auth import verify_bearer_token, limiter
 from src.models.event_discovery import EventDiscoveryQuery, EventDiscoveryResponse
 from src.services.events.discovery.event_discovery import EventDiscoveryService
 
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(verify_bearer_token)]
+)
 service = EventDiscoveryService()
-
 
 def _normalize_and_validate(request: EventDiscoveryQuery) -> EventDiscoveryQuery:
     # Query string is required to keep results relevant and avoid expensive broad calls.
@@ -53,6 +55,7 @@ async def root():
 
 
 @router.get("/search", response_model=EventDiscoveryResponse)
+# @limiter.limit("15/minute")
 async def search_events_get(
     query: str | None = None,
     city: str | None = None,
@@ -85,12 +88,14 @@ async def search_events_get(
 
 
 @router.post("/search", response_model=EventDiscoveryResponse)
+# @limiter.limit("15/minute")
 async def search_events_post(request: EventDiscoveryQuery) -> EventDiscoveryResponse:
     request = _normalize_and_validate(request)
     return await service.search(request)
 
 
 @router.get("/providers/check")
+# @limiter.limit("15/minute")
 async def check_provider_keys():
     """Lightweight readiness check for provider credentials.
 
