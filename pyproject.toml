@@ -13,6 +13,8 @@ dependencies = [
     "requests",
     "uvicorn",
     "python-dotenv",
+    "PyJWT",
+    "slowapi",
 ]
 
 [project.optional-dependencies]
