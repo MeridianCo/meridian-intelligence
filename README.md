@@ -43,9 +43,16 @@ curl -X POST http://localhost:8000/events/scrape/search \
   }'
 ```
 
-The scraper can discover likely event source pages from seed URLs, extract `schema.org/Event` JSON-LD when available, persist merged events to Supabase, and score source reliability. Supabase persistence expects an `events` table keyed by `fingerprint`, with columns for `title`, `payload`, `score`, and `duplicate_count`.
+The scraper can discover likely event source pages from seed URLs, extract `schema.org/Event` JSON-LD when available, persist merged events to Supabase, and score source reliability. Supabase persistence expects a `scraped_events` table keyed by `fingerprint`, with columns for `title`, `city`, `event_url`, `source_url`, `payload`, `score`, `duplicate_count`, and `search_text`.
 
 The response includes discovered sources, source reliability, each candidate's title, source URL, event URL, stable fingerprint, all duplicate source/event URLs, duplicate count, snippet, detected dates, matched terms, relevance score, and gathered event details such as description, location, venue, times, prices, organizer, image URL, ticket URL, and structured start/end dates.
+
+Search saved scraped events:
+
+```bash
+curl "http://localhost:8000/events/scrape/saved?query=networking&city=Calgary&limit=10" \
+  -H "Authorization: Bearer <supabase-access-token>"
+```
 
 ## Event discovery (API providers)
 
@@ -56,7 +63,7 @@ Environment variables are listed in `.env.example` (provider keys must remain se
 Search (GET):
 
 ```bash
-curl "http://localhost:8000/event-discovery/search?query=networking&city=Calgary&limit=10"
+curl "http://localhost:8000/events/discovery/search?query=networking&city=Calgary&limit=10"
 ```
 
 Required: provide `query` plus either `city` or both `latitude` + `longitude`. If you omit dates, the API defaults to a 30-day window starting today.

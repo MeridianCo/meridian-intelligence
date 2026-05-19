@@ -6,7 +6,7 @@ from typing import Any
 
 from src.services.events.scrape.event_scraping import EventCandidate, candidate_to_dict
 
-EVENTS_TABLE = "events_scraped"
+EVENTS_TABLE = "scraped_events"
 
 def save_event_candidates(
     candidates: list[EventCandidate],
@@ -43,6 +43,27 @@ def list_saved_events(supabase_client: Any | None = None) -> list[dict[str, obje
     return [row.get("payload", {}) for row in result.data or []]
 
 
+def search_saved_events(
+    *,
+    query: str | None = None,
+    city: str | None = None,
+    limit: int = 20,
+    supabase_client: Any | None = None,
+) -> list[dict[str, object]]:
+    """Search saved scraped event payloads for UI/API discovery flows."""
+
+    client = supabase_client or _default_supabase_client()
+    request = client.table(EVENTS_TABLE).select("payload,title,city,score")
+    clean_query = (query or "").strip()
+    clean_city = (city or "").strip()
+    if clean_query:
+        request = request.ilike("search_text", f"%{clean_query}%")
+    if clean_city:
+        request = request.eq("city", clean_city)
+    result = request.order("score", desc=True).limit(limit).execute()
+    return [row.get("payload", {}) for row in result.data or []]
+
+
 def _default_supabase_client() -> Any:
     from src.db import supabase
 
@@ -60,10 +81,39 @@ def _payload_for_supabase(candidate: EventCandidate) -> dict[str, object]:
     return {
         "fingerprint": fingerprint,
         "title": payload["title"],
+        "city": _city_for_payload(payload),
+        "event_url": payload.get("event_url"),
+        "source_url": payload.get("source_url"),
         "payload": payload,
         "score": payload["score"],
         "duplicate_count": payload["duplicate_count"],
+        "search_text": _search_text_for_payload(payload),
     }
+
+
+def _city_for_payload(payload: dict[str, object]) -> str | None:
+    details = payload.get("details")
+    if isinstance(details, dict):
+        location = details.get("location")
+        if location:
+            return str(location).split(",")[0].strip()
+    return None
+
+
+def _search_text_for_payload(payload: dict[str, object]) -> str:
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    values = [
+        payload.get("title"),
+        payload.get("snippet"),
+        payload.get("event_url"),
+        payload.get("source_url"),
+        *(payload.get("matched_terms") or []),
+        details.get("description") if isinstance(details, dict) else None,
+        details.get("location") if isinstance(details, dict) else None,
+        details.get("venue") if isinstance(details, dict) else None,
+        details.get("organizer") if isinstance(details, dict) else None,
+    ]
+    return " ".join(str(value) for value in values if value).lower()
 
 
 def _existing_payloads(client: Any, fingerprints: list[str]) -> dict[str, dict[str, object]]:

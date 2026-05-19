@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from src.services.events.discovery import BlogSource, EventSearch, discover_event_sources, scrape_events, scrape_matching_events
-from src.db.event_store import list_saved_events, save_event_candidates
+from src.db.event_store import EVENTS_TABLE, list_saved_events, save_event_candidates, search_saved_events
 
 
 BLOG_HTML = """
@@ -92,6 +92,9 @@ class FakeSupabaseTable:
     def __init__(self, client):
         self.client = client
         self._fingerprints = None
+        self._query = None
+        self._city = None
+        self._limit = None
         self._upsert_payloads = None
 
     def select(self, _columns):
@@ -101,7 +104,20 @@ class FakeSupabaseTable:
         self._fingerprints = set(fingerprints)
         return self
 
+    def ilike(self, column, pattern):
+        self._query = (column, pattern.strip("%").lower())
+        return self
+
+    def eq(self, column, value):
+        if column == "city":
+            self._city = str(value).lower()
+        return self
+
     def order(self, _column, desc=False):
+        return self
+
+    def limit(self, value):
+        self._limit = value
         return self
 
     def upsert(self, payloads, on_conflict=None):
@@ -116,6 +132,22 @@ class FakeSupabaseTable:
         rows = list(self.client.rows.values())
         if self._fingerprints is not None:
             rows = [row for row in rows if row["fingerprint"] in self._fingerprints]
+        if self._query is not None:
+            _column, query = self._query
+            rows = [
+                row for row in rows
+                if query in str(row.get("title", "")).lower()
+                or query in str(row.get("payload", {}).get("snippet", "")).lower()
+                or query in " ".join(row.get("payload", {}).get("matched_terms", [])).lower()
+            ]
+        if self._city is not None:
+            rows = [
+                row for row in rows
+                if self._city in str(row.get("city", "")).lower()
+                or self._city in str(row.get("payload", {}).get("details", {}).get("location", "")).lower()
+            ]
+        if self._limit is not None:
+            rows = rows[: self._limit]
         return FakeSupabaseResult(rows)
 
 
@@ -124,6 +156,7 @@ class FakeSupabase:
         self.rows = {}
 
     def table(self, _name):
+        self.last_table = _name
         return FakeSupabaseTable(self)
 
 
@@ -235,6 +268,36 @@ class EventScraperTests(unittest.TestCase):
             saved[0]["source_urls"],
             ["https://one.example/blog", "https://two.example/events"],
         )
+
+    def test_saves_events_to_scraped_events_table(self):
+        client = FakeSupabase()
+
+        list_saved_events(client)
+
+        self.assertEqual(EVENTS_TABLE, "scraped_events")
+        self.assertEqual(client.last_table, "scraped_events")
+
+    @patch("src.services.events.scrape.event_scraping.fetch_url", return_value=BLOG_HTML)
+    def test_searches_saved_scraped_events_by_query_city_and_limit(self, _fetch):
+        search = EventSearch(
+            city="Calgary",
+            interests=["AI", "healthcare"],
+            sources=[BlogSource(url="https://example.com/blog")],
+        )
+        results = scrape_matching_events(search)
+        client = FakeSupabase()
+        save_event_candidates(results, client)
+
+        saved = search_saved_events(
+            query="healthcare",
+            city="Calgary",
+            limit=1,
+            supabase_client=client,
+        )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["title"], "Founder AI Night")
+        self.assertIn("healthcare", saved[0]["matched_terms"])
 
     @patch("src.services.events.scrape.event_scraping.fetch_url", return_value=JSON_LD_HTML)
     def test_extracts_schema_org_event_json_ld(self, _fetch):

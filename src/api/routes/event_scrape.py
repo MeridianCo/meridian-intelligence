@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
-from src.db.event_store import save_event_candidates
+from src.db.event_store import list_saved_events, save_event_candidates, search_saved_events
 from src.models.param_types import event_search_request
 from src.services.events.scrape import (
     BlogSource,
@@ -20,7 +20,24 @@ async def root():
     return {
         "service": "Event Discovery API",
         "description": "Scrapes local blogs and listing pages for city-matched events.",
-        "endpoints": ["/events/search"],
+        "endpoints": ["/events/scrape/search", "/events/scrape/saved"],
+    }
+
+
+@router.get("/saved")
+async def saved_events(
+    query: str | None = None,
+    city: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    events = (
+        search_saved_events(query=query, city=city, limit=limit)
+        if query or city
+        else list_saved_events()
+    )
+    return {
+        "count": len(events),
+        "events": events[:limit],
     }
 
 

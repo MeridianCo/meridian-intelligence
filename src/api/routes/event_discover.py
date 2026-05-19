@@ -48,7 +48,7 @@ def _normalize_and_validate(request: EventDiscoveryQuery) -> EventDiscoveryQuery
 async def root():
     return {
         "service": "Event Discovery (API providers)",
-        "endpoints": ["/event-discovery/search"],
+        "endpoints": ["/events/discovery/search"],
         "enabled_providers": service.enabled_providers(),
         "available_providers": service.available_providers(),
     }

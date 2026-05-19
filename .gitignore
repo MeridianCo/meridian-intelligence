@@ -8,3 +8,6 @@ __pycache__/
 
 # Environment variables
 .env
+
+# Supabase CLI local state
+supabase/.temp/
