@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 
 from src.db.event_store import save_event_candidates
 from src.models.param_types import event_search_request
@@ -26,33 +26,33 @@ async def root():
 
 @router.post("/search")
 @limiter.limit("15/minute")
-async def search_events(request: event_search_request):
-    if not request.source_urls and not request.seed_urls:
+async def search_events(request: Request, body: event_search_request):
+    if not body.source_urls and not body.seed_urls:
         raise HTTPException(
             status_code=400,
             detail="Provide source_urls to scrape or seed_urls to discover event sources.",
         )
 
     search = EventSearch(
-        city=request.city,
-        interests=request.interests,
-        nearby_locations=request.nearby_locations,
-        sources=[BlogSource(url=str(url)) for url in request.source_urls],
-        seed_urls=[str(url) for url in request.seed_urls] if request.discover_sources else [],
-        max_discovered_sources=request.max_discovered_sources,
-        max_results=request.max_results,
+        city=body.city,
+        interests=body.interests,
+        nearby_locations=body.nearby_locations,
+        sources=[BlogSource(url=str(url)) for url in body.source_urls],
+        seed_urls=[str(url) for url in body.seed_urls] if body.discover_sources else [],
+        max_discovered_sources=body.max_discovered_sources,
+        max_results=body.max_results,
     )
 
     try:
         result = scrape_events(search)
         candidates = result.events
-        saved_events = save_event_candidates(candidates) if request.persist_results else []
+        saved_events = save_event_candidates(candidates) if body.persist_results else []
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Unable to scrape source URLs: {exc}") from exc
 
     return {
-        "city": request.city,
-        "interests": request.interests,
+        "city": body.city,
+        "interests": body.interests,
         "discovered_sources": [
             {"url": source.url, "name": source.name, "score": source.discovery_score}
             for source in result.discovered_sources
